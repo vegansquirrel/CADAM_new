@@ -20,6 +20,10 @@ import { useSendContentMutation } from '@/services/messageService';
 import { useProfile } from '@/services/profileService';
 
 export function PromptView() {
+  // TEMPORARY: Bypass billing/credit checks for local development
+  // TODO: Remove this bypass for production
+  const BYPASS_BILLING_FOR_LOCAL_DEV = false;
+
   const navigate = useNavigate();
   const { toast } = useToast();
   const { user, billing, isLoading } = useAuth();
@@ -61,11 +65,13 @@ export function PromptView() {
   }, []);
 
   const lowPrompts = useMemo(() => {
+    if (BYPASS_BILLING_FOR_LOCAL_DEV) return false;
     if (isLoading) return false;
     return totalTokens > 0 && totalTokens <= 10;
   }, [totalTokens, isLoading]);
 
   const limitReached = useMemo(() => {
+    if (BYPASS_BILLING_FOR_LOCAL_DEV) return false;
     if (isLoading) return false;
     return totalTokens <= 0;
   }, [totalTokens, isLoading]);
@@ -111,6 +117,17 @@ export function PromptView() {
         mesh_count: content.mesh ? 1 : 0,
         conversation_id: newConversationId,
       });
+
+      // Skip database conversation creation for local dev without auth
+      if (BYPASS_BILLING_FOR_LOCAL_DEV && !user?.id) {
+        // Just send the message directly without creating a conversation
+        sendMessage(content);
+
+        return {
+          conversationId: newConversationId,
+          content: content,
+        };
+      }
 
       // Create conversation immediately with 'New Conversation'
       const { data: conversation, error: conversationError } = await supabase
@@ -241,6 +258,7 @@ export function PromptView() {
                     user_id: user?.id ?? '',
                   }}
                   onFocus={() => {
+                    if (BYPASS_BILLING_FOR_LOCAL_DEV) return;
                     if (!user) {
                       navigate('/signin');
                       return;
