@@ -14,15 +14,12 @@ import { formatUserMessage } from '../_shared/messageUtils.ts';
 import { corsHeaders } from '../_shared/cors.ts';
 import { billing, BillingClientError } from '../_shared/billingClient.ts';
 import { initSentry, logError } from '../_shared/sentry.ts';
+import { callBedrock, streamBedrock } from '../_shared/bedrockClient.ts';
 
 const CHAT_TOKEN_COST = 1;
 const PARAMETRIC_TOKEN_COST = 5;
 
 initSentry();
-
-// OpenRouter API configuration
-const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
-const OPENROUTER_API_KEY = Deno.env.get('OPENROUTER_API_KEY') ?? '';
 
 // Helper to stream updated assistant message rows.
 // Silently noop if the controller is already closed (e.g. the client
@@ -198,33 +195,18 @@ async function generateTitleFromMessages(
 - No quotes or special formatting
 - Examples: "Coffee Mug", "Gear Assembly", "Phone Stand"`;
 
-    const response = await fetch(OPENROUTER_API_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${OPENROUTER_API_KEY}`,
-        'HTTP-Referer': 'https://adam-cad.com',
-        'X-Title': 'Adam CAD',
-      },
-      body: JSON.stringify({
-        model: 'anthropic/claude-haiku-4.5',
-        max_tokens: 30,
-        messages: [
-          { role: 'system', content: titleSystemPrompt },
-          ...messagesToSend,
-          {
-            role: 'user',
-            content: 'Title:',
-          },
-        ],
-      }),
+    const data = await callBedrock({
+      model: 'claude-haiku-4-20250514',
+      max_tokens: 30,
+      messages: [
+        { role: 'system', content: titleSystemPrompt },
+        ...messagesToSend,
+        {
+          role: 'user',
+          content: 'Title:',
+        },
+      ],
     });
-
-    if (!response.ok) {
-      throw new Error(`OpenRouter API error: ${response.statusText}`);
-    }
-
-    const data = await response.json();
     if (data.choices && data.choices[0]?.message?.content) {
       let title = data.choices[0].message.content.trim();
 
@@ -640,24 +622,12 @@ Deno.serve(async (req) => {
       requestBody.max_tokens = 20000;
     }
 
-    const response = await fetch(OPENROUTER_API_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${OPENROUTER_API_KEY}`,
-        'HTTP-Referer': 'https://adam-cad.com',
-        'X-Title': 'Adam CAD',
-      },
-      body: JSON.stringify(requestBody),
+    const anthropicStream = await streamBedrock({
+      model: requestBody.model,
+      messages: requestBody.messages,
+      tools: requestBody.tools,
+      max_tokens: requestBody.max_tokens,
     });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error(`OpenRouter API Error: ${response.status} - ${errorText}`);
-      throw new Error(
-        `OpenRouter API error: ${response.statusText} (${response.status})`,
-      );
-    }
 
     const responseStream = new ReadableStream({
       async start(controller) {
@@ -681,7 +651,7 @@ Deno.serve(async (req) => {
         };
 
         try {
-          const reader = response.body?.getReader();
+          const reader = anthropicStream.getReader();
           const decoder = new TextDecoder();
           let buffer = '';
 
@@ -728,10 +698,10 @@ Deno.serve(async (req) => {
               // Surface API errors so the outer catch can mark tools as errored
               // — never swallow them in the parse-tolerance block above.
               if (chunk.error) {
-                console.error('OpenRouter stream error:', chunk.error);
+                console.error('API stream error:', chunk.error);
                 throw new Error(
                   chunk.error.message ||
-                    `OpenRouter error: ${JSON.stringify(chunk.error)}`,
+                    `API error: ${JSON.stringify(chunk.error)}`,
                 );
               }
 
@@ -998,26 +968,13 @@ Deno.serve(async (req) => {
             };
 
             try {
-              const codeResponse = await fetch(OPENROUTER_API_URL, {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  Authorization: `Bearer ${OPENROUTER_API_KEY}`,
-                  'HTTP-Referer': 'https://adam-cad.com',
-                  'X-Title': 'Adam CAD',
-                },
-                body: JSON.stringify(codeRequestBody),
+              const codeStream = await streamBedrock({
+                model: codeRequestBody.model,
+                messages: codeRequestBody.messages,
+                max_tokens: codeRequestBody.max_tokens,
               });
 
-              if (!codeResponse.ok) {
-                const t = await codeResponse.text();
-                throw new Error(
-                  `Code gen error: ${codeResponse.status} - ${t}`,
-                );
-              }
-
-              const codeReader = codeResponse.body?.getReader();
-              if (!codeReader) throw new Error('No code response body');
+              const codeReader = codeStream.getReader();
 
               const codeDecoder = new TextDecoder();
               let codeBuffer = '';
@@ -1062,7 +1019,7 @@ Deno.serve(async (req) => {
                   if (chunk.error) {
                     throw new Error(
                       chunk.error.message ||
-                        `OpenRouter error: ${JSON.stringify(chunk.error)}`,
+                        `API error: ${JSON.stringify(chunk.error)}`,
                     );
                   }
 
