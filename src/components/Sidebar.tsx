@@ -49,6 +49,7 @@ function DesktopSidebar({ isSidebarOpen, setIsSidebarOpen }: SidebarProps) {
   const { data: recentConversations } = useQuery<Conversation[]>({
     queryKey: ['conversations', 'recent'],
     initialData: [],
+    enabled: !!user?.id, // Only fetch when user is authenticated
     queryFn: async () => {
       const { data, error } = await supabase
         .from('conversations')

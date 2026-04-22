@@ -8,6 +8,14 @@ interface AuthGuardProps {
 }
 
 export function AuthGuard({ children }: AuthGuardProps) {
+  // TEMPORARY: Bypass authentication for local development
+  // TODO: Remove this bypass for production
+  const BYPASS_AUTH_FOR_LOCAL_DEV = false;
+
+  if (BYPASS_AUTH_FOR_LOCAL_DEV) {
+    return <>{children}</>;
+  }
+
   const { session, user, isLoading } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
